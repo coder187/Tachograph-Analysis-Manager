@@ -1,0 +1,434 @@
+Option Compare Database
+Option Explicit
+
+Sub PopulateSchedule(IntervalType As Byte, IntervalValue As Byte, AnalysisDate As Date, PeriodEndDate As Date, DriverID As Integer, VehicleID As Integer)
+On Error GoTo PopulateSchedule_Err
+   'IntervalType = 1 Day / 2 Month / 3 Quater
+   'IntervalValue = Number of Days to cover in report period e.g. 31 Days
+   'AnalysisDate = Date of Analysis
+   'PeriodEndDate = Populate until this date
+   '
+   'example:
+   '
+   'populate 1 month (29 days)
+   'PopulateSchedule 1,29,#1/2/2020#,#29/2/2020#,788,0
+   
+   'populate range
+   'PopulateSchedule 2,0,#1/3/2020#,#31/8/2020#,788,0
+   
+   'populate quarter (16 quarters upto 31/12/22)
+   'populateSchedule 3,16,date(),#12/31/22#,0,0
+   
+   
+    Dim AnalDate As Date
+    Dim LastReportDate_Driver As Date
+    Dim ReportPeriodStart As Date
+    Dim LastReportDate_Vehicle As Date
+    Dim ReportPeriodLength As Integer  'total number of days to be analysed
+    Dim DaysLeftInQuarter As Byte
+    Dim ReportPeriodEnd As Date
+    
+
+    
+    Dim M As DAO.Database
+    Dim r As DAO.Recordset
+        
+    Dim ssql As String
+    
+    If DriverID = 0 Then
+        ssql = "Select ContactID From Drivers Order By ContactID"
+    Else
+        ssql = "Select ContactID From Drivers WHERE ContactID = " & DriverID & " Order By ContactID"
+    End If
+    
+    Set M = CurrentDb()
+    Set r = M.OpenRecordset(ssql, dbOpenSnapshot)
+    
+        
+    r.MoveFirst
+    Do While Not r.EOF 'for ea driver
+    
+        LastReportDate_Driver = GetLastReportDate(r(0), True)
+        ReportPeriodStart = DateAdd("d", 1, LastReportDate_Driver)
+    
+        Select Case IntervalType
+            Case 1
+              'total number of days to include in analysis period
+              ReportPeriodLength = Get_ReportPeriodLength(IntervalType, IntervalValue, LastReportDate_Driver, PeriodEndDate)
+        
+        '     breakout the periods by interval value
+        '      Select Case IntervalType
+        '      Case 1
+        '      Case 2
+        '      Case Else
+        '      End Select
+              
+                  
+              ssql = "insert into [tacho_schedule_driver] (DriverID,Analysis_Date,Report_Period_Start,Report_Period_End) VALUES " & _
+              "(" & r(0) & "," & CDbl(AnalysisDate) & "," & CDbl(ReportPeriodStart) & "," & CDbl(DateAdd("d", ReportPeriodLength, LastReportDate_Driver)) & ")"
+              
+              CurrentDb.Execute ssql
+            Case 2
+                Debug.Print ("Interval 2 not yet implemented")
+
+            Case 3
+                
+                DaysLeftInQuarter = get_QuarterDaysLeft(LastReportDate_Driver)
+                If DaysLeftInQuarter <> 0 Then
+                     'finish out the current quarter
+                     ssql = "insert into [tacho_schedule_driver] (DriverID,Analysis_Date,Report_Period_Start,Report_Period_End) VALUES " & _
+                    "(" & r(0) & "," & CDbl(AnalysisDate) & "," & CDbl(ReportPeriodStart) & "," & CDbl(DateAdd("d", DaysLeftInQuarter, LastReportDate_Driver)) & ")"
+                    
+                    CurrentDb.Execute ssql
+
+                End If
+                
+                'populate each quarter (IntervalValue)
+                Dim i As Byte
+                i = 0
+                For i = 1 To IntervalValue
+                    LastReportDate_Driver = GetLastReportDate(r(0), True)
+                    ReportPeriodStart = DateAdd("d", 1, LastReportDate_Driver)
+
+                    DaysLeftInQuarter = get_QuarterDaysLeft(ReportPeriodStart)
+                    ReportPeriodEnd = DateAdd("d", DaysLeftInQuarter, ReportPeriodStart)
+                    
+                    AnalysisDate = DateAdd("w", 1, ReportPeriodEnd)
+                    If ReportPeriodEnd <= PeriodEndDate Then
+                    
+                         ssql = "insert into [tacho_schedule_driver] (DriverID,Analysis_Date,Report_Period_Start,Report_Period_End) VALUES " & _
+                        "(" & r(0) & "," & CDbl(AnalysisDate) & "," & CDbl(ReportPeriodStart) & "," & CDbl(ReportPeriodEnd) & ")"
+                
+                        CurrentDb.Execute ssql
+                    End If
+                Next i
+                
+            Case Else
+                Debug.Print ("Invalid Interval Selection")
+        End Select
+                
+        
+             
+    r.MoveNext
+    Loop
+    
+    MsgBox "Schedule Populated Successfully", vbInformation
+PopulateSchedule_Exit:
+    Exit Sub
+PopulateSchedule_Err:
+    MsgBox Err.Description & vbCrLf & vbCrLf & "PopulateSchedule Exit", vbCritical, "Error"
+    Resume PopulateSchedule_Exit
+    
+End Sub
+Function GetLastReportDate(id As Integer, which As Boolean) 'true for driver. false for vehicle
+On Error GoTo GetLastReportDate_ERR
+    Dim M As DAO.Database
+    Dim r As DAO.Recordset
+        
+    Dim ssql As String
+    
+    If which Then
+        ssql = "Select Report_Period_End From Tacho_Schedule_Driver Where DriverID = " & id & " order by Report_Period_End DESC"
+    Else
+        ssql = "Select Report_Period_End From Tacho_Schedule_Vehicle Where VehicleID = " & id & " order by Report_Period_End DESC"
+    End If
+    
+    Set M = CurrentDb()
+    Set r = M.OpenRecordset(ssql, dbOpenSnapshot)
+    
+    If r.EOF Then
+        If which Then
+            GetLastReportDate = GetDriverStartDate(id)
+        Else
+            GetLastReportDate = GetVehcileStartDate(id)
+        End If
+    Else
+        GetLastReportDate = r(0)
+    End If
+    r.Close
+    Set r = Nothing
+    Set M = Nothing
+    
+GetLastReportDate_EXIT:
+    Exit Function
+    
+GetLastReportDate_ERR:
+    GetLastReportDate = #1/1/1980#
+    Resume GetLastReportDate_EXIT
+End Function
+
+Function GetDriverStartDate(id As Integer) As Date
+GetDriverStartDate = #11/5/2017#  'Anaysis Start Date
+'GetDriverStartDate = DFirst("DriverStart", "Contacts", "Contact =  " & id)
+End Function
+
+Function GetVehcileStartDate(id As Integer) As Date
+GetVehcileStartDate = DFirst("AquisitionDate", "vehicle", "VehicleID =  " & id)
+End Function
+
+Public Function GetDriverTachoPath(TSID) As String
+    
+    GetDriverTachoPath = DFirst("tacho_dir", "param") & DFirst("driver_path", "drivers", "contactid =  " & DFirst("driverid", "tacho_schedule_driver", "tacho_schedule_id =  " & TSID)) & "\"
+End Function
+
+Public Function GetProcessed(id As Integer) As String
+On Error GoTo GetProcessed_Err
+Dim M As Database
+Dim r As Recordset
+
+Set M = CurrentDb()
+Set r = M.OpenRecordset("select driversignoff from [processed] where tsd_id = " & id & ";", dbOpenSnapshot)
+If r.EOF Then
+    GetProcessed = "Awaiting IDHA Analysis"
+Else
+    If IsNull(r(0)) Or Len(r(0)) = 0 Then
+        GetProcessed = "Awaiting Driver Sign Off"
+    Else
+        GetProcessed = "Complete ?"
+    End If
+End If
+r.Close
+
+Set M = Nothing
+Set r = Nothing
+GetProcessed_Exit:
+    Exit Function
+GetProcessed_Err:
+    GetProcessed = "Error:" & Err.Number & ":" & Err.Description
+    Resume GetProcessed_Exit
+End Function
+
+Function Get_ReportPeriodLength(interval_type As Byte, interval_value As Byte, lastreportdate As Date, endreportPeriod As Date) As Integer
+
+Dim NumDays As Integer
+Dim eom_date As Date
+Dim RemainingDays As Byte 'number of days remaining in the month of the last report period
+Select Case interval_type
+    Case 1
+        'days
+        Get_ReportPeriodLength = interval_value
+    Case 2
+        'months.
+        'interval_value ignored.
+        'calculate how many days between last report day and end report day
+        
+        'number of days in the month of the last report period
+        NumDays = Day(DateSerial(Year(lastreportdate), Month(lastreportdate) + 1, 0)) ' number of days in the month
+        
+        'end of month date
+        eom_date = DateSerial(Year(lastreportdate), Month(lastreportdate), NumDays)
+        
+        'number of days not anlaysed in the last month of the report period
+        RemainingDays = DateDiff("d", lastreportdate, eom_date)
+        
+        'number of days between end of month(last period) and end of report period (this period)
+        NumDays = DateDiff("d", eom_date, endreportPeriod)
+        
+        Get_ReportPeriodLength = NumDays + RemainingDays
+        
+    Case Else
+        'qtrs
+        
+        Get_ReportPeriodLength = 0
+    End Select
+End Function
+
+
+'code from :
+'https://www.access-programmers.co.uk/forums/threads/find-end-of-quarter-based-on-todays-date.293102/
+Function get_QuarterDaysLeft(datein As Date) As Integer
+ ' returns number of days left in this quarter
+Dim ret As Integer
+Dim dt_QuarterEnd As String
+
+ret = -1     ' return value, by default is -1 to show error
+
+dt_QuarterEnd = "3/31"   ' will hold month/day of quarter end
+
+If DatePart("q", datein) = 2 Then dt_QuarterEnd = "6/30"
+If DatePart("q", datein) = 3 Then dt_QuarterEnd = "9/30"
+If DatePart("q", datein) = 4 Then dt_QuarterEnd = "12/31"
+ ' determines current quarter and assigns correct ending month/day
+
+'ret = DateDiff("d", DateValue(dt_QuarterEnd & "/" & Year(Date()), Date())
+'Debug.Print (DateValue(dt_QuarterEnd & "/" & Year(datein)))
+
+ret = DateDiff("d", datein, DateValue(dt_QuarterEnd & "/" & Year(datein)))
+  ' gets difference between quarter end and today
+
+get_QuarterDaysLeft = ret
+    ' returns value
+
+End Function
+
+Sub nn()
+
+'PopulateSchedule 2,1,#12/2/19
+
+'PopulateSchedule 2,1,#12/2/19#,#11/30/19,0,0
+
+End Sub
+'''Version1 pre Nov 2019
+''''Sub PopulateSchedule(Interval As Byte, AnalysisStartDate As Date, AnalysisEndDate As Date, DriverID As Integer, VehicleID As Integer)
+''''   'PopulateSchedule 7,#Next Anal Date#,#End Anal Date#, 0=All Drivers,0
+''''   'PopulateSchedule 7,#26/09/2017#,#30/01/2018#,184,0 - Add Analysis Dates - ev 7 Days, Next Anal Date, Last Anal Date,Driver ID, Veh ID
+''''   'PopulateSchedule 7,#1/9/2018#,#1/9/2019#,7,0
+''''    Dim AnalDate As Date
+''''    Dim LastReportDate_Driver As Date
+''''    Dim LastReportDate_Vehicle As Date
+''''
+''''    Dim M As DAO.Database
+''''    Dim r As DAO.Recordset
+''''
+''''    Dim ssql As String
+''''
+''''    If DriverID = 0 Then
+''''        ssql = "Select ContactID From Drivers Order By ContactID"
+''''    Else
+''''        ssql = "Select ContactID From Drivers WHERE ContactID = " & DriverID & " Order By ContactID"
+''''    End If
+''''
+''''    Set M = CurrentDb()
+''''    Set r = M.OpenRecordset(ssql, dbOpenSnapshot)
+''''
+''''    r.MoveFirst
+''''    Do While Not r.EOF
+''''
+''''        AnalDate = AnalysisStartDate
+''''
+''''        Do While AnalDate <= AnalysisEndDate
+''''
+''''            LastReportDate_Driver = GetLastReportDate(r(0), True)
+''''            LastReportDate_Driver = DateAdd("d", 1, LastReportDate_Driver)
+''''
+''''
+''''
+''''            ssql = "insert into [tacho_schedule_driver] (DriverID,Analysis_Date,Report_Period_Start,Report_Period_End) VALUES  (" & r(0) & "," & CDbl(AnalDate) & "," & CDbl(LastReportDate_Driver) & "," & CDbl(DateAdd("d", Interval - 1, LastReportDate_Driver)) & ")"
+''''
+''''            CurrentDb.Execute ssql
+''''
+''''
+''''            AnalDate = DateAdd("d", Interval, AnalDate)
+''''        Loop
+''''
+''''    r.MoveNext
+''''    Loop
+''''
+''''End Sub
+
+Function EndOfMonth(MyDate As Date)
+EndOfMonth = DateAdd("d", DatePart("d", DateAdd("m", 1, MyDate)) * -1, DateAdd("m", 1, MyDate))
+End Function
+
+
+'
+'Sub PopulateSchedule(IntervalType As Byte, IntervalValue As Byte, AnalysisDate As Date, PeriodEndDate As Date, DriverID As Integer, VehicleID As Integer)
+'On Error GoTo PopulateSchedule_Err
+'   'IntervalType = 1 Day / 2 Month / 3 Quater
+'   'IntervalValue = Number of Days to cover in report period e.g. 31 Days
+'   'AnalysisDate = Date of Analysis
+'   'PeriodEndDate = Populate until this date
+'   '
+'   'example:
+'   '
+'   'populate 1 month (29 days)
+'   'PopulateSchedule 1,29,#1/2/2020#,#29/2/2020#,788,0
+'
+'   'populate range
+'   'PopulateSchedule 2,0,#1/3/2020#,#31/8/2020#,788,0
+'
+'
+'    Dim AnalDate As Date
+'    Dim LastReportDate_Driver As Date
+'    Dim ReportPeriodStart As Date
+'    Dim LastReportDate_Vehicle As Date
+'    Dim ReportPeriodLength As Integer  'total number of days to be analysed
+'
+'
+'    Dim M As DAO.Database
+'    Dim r As DAO.Recordset
+'
+'    Dim ssql As String
+'
+'    If DriverID = 0 Then
+'        ssql = "Select ContactID From Drivers Order By ContactID"
+'    Else
+'        ssql = "Select ContactID From Drivers WHERE ContactID = " & DriverID & " Order By ContactID"
+'    End If
+'
+'    Set M = CurrentDb()
+'    Set r = M.OpenRecordset(ssql, dbOpenSnapshot)
+'
+'
+'    r.MoveFirst
+'    Do While Not r.EOF 'for ea driver
+'
+'        LastReportDate_Driver = GetLastReportDate(r(0), True)
+'        ReportPeriodStart = DateAdd("d", 1, LastReportDate_Driver)
+'
+'
+'        'total number of days to include in analysis period
+'        ReportPeriodLength = Get_ReportPeriodLength(IntervalType, IntervalValue, LastReportDate_Driver, PeriodEndDate)
+'
+'      '     breakout the periods by interval value
+'      '      Select Case IntervalType
+'      '      Case 1
+'      '      Case 2
+'      '      Case Else
+'      '      End Select
+'
+'
+'            ssql = "insert into [tacho_schedule_driver] (DriverID,Analysis_Date,Report_Period_Start,Report_Period_End) VALUES " & _
+'            "(" & r(0) & "," & CDbl(AnalysisDate) & "," & CDbl(ReportPeriodStart) & "," & CDbl(DateAdd("d", ReportPeriodLength, LastReportDate_Driver)) & ")"
+'
+'            CurrentDb.Execute ssql
+'
+'    r.MoveNext
+'    Loop
+'
+'    MsgBox "Schedule Populated Successfully", vbInformation
+'PopulateSchedule_Exit:
+'    Exit Sub
+'PopulateSchedule_Err:
+'    MsgBox Err.Description & vbCrLf & vbCrLf & "PopulateSchedule Exit", vbCritical, "Error"
+'    Resume PopulateSchedule_Exit
+'
+'End Sub
+
+
+'Function Get_ReportPeriodLength(interval_type As Byte, interval_value As Byte, lastreportdate As Date, endreportPeriod As Date) As Integer
+'
+'Dim NumDays As Integer
+'Dim eom_date As Date
+'Dim RemainingDays As Byte 'number of days remaining in the month of the last report period
+'Select Case interval_type
+'    Case 1
+'        'days
+'        Get_ReportPeriodLength = interval_value
+'    Case 2
+'        'months.
+'        'interval_value ignored.
+'        'calculate how many days between last report day and end report day
+'
+'        'number of days in the month of the last report period
+'        NumDays = Day(DateSerial(Year(lastreportdate), Month(lastreportdate) + 1, 0)) ' number of days in the month
+'
+'        'end of month date
+'        eom_date = DateSerial(Year(lastreportdate), Month(lastreportdate), NumDays)
+'
+'        'number of days not anlaysed in the last month of the report period
+'        RemainingDays = DateDiff("d", lastreportdate, eom_date)
+'
+'        'number of days between end of month(last period) and end of report period (this period)
+'        NumDays = DateDiff("d", eom_date, endreportPeriod)
+'
+'        Get_ReportPeriodLength = NumDays + RemainingDays
+'
+'    Case Else
+'        'qtrs
+'        '
+'        Get_ReportPeriodLength = 0
+'    End Select
+'End Function
+'
+

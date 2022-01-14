@@ -1,0 +1,290 @@
+Option Compare Database
+Option Explicit
+
+
+'Sub CreateTxtFile(sDriver As String)
+Sub CreateTxtFile()
+
+Dim path As String
+path = "S:\Admin\Tacho\Reports\"
+
+Dim pdfToText_Path As String
+pdfToText_Path = "C:\Users\Jonathan\Downloads\xpdf-tools-win-4.00\xpdf-tools-win-4.00\bin32\pdftotext.exe"
+pdfToText_Path = "s:\pdftotext.exe"
+
+CreateTextFiles path, pdfToText_Path
+Debug.Print "fin"
+End Sub
+
+Sub CreateTextFiles(p As String, pdfToText As String)
+
+Dim strTemp As String
+Dim colFolders As New Collection
+Dim vFolderName As Variant
+Dim r As Variant
+Dim DriverID As Integer
+DriverID = 0
+
+strTemp = Dir(p, vbDirectory)
+    Do While strTemp <> vbNullString
+        If (strTemp <> ".") And (strTemp <> "..") And strTemp <> "tmp" Then
+            If (GetAttr(p & strTemp & "\") And vbDirectory) <> 0& Then
+                colFolders.Add strTemp
+            End If
+        End If
+    strTemp = Dir
+    Loop
+    
+     For Each vFolderName In colFolders
+        Debug.Print vFolderName & ":" & DriverID
+        
+        strTemp = Dir(p & vFolderName & "\*.pdf")
+        If Len(strTemp) > 0 Then
+            Do While strTemp <> vbNullString
+                Debug.Print "Create PDF " & strTemp
+                r = Shell(pdfToText & " " & Chr(34) & p & vFolderName & "\" & strTemp & Chr(34) & " " & Chr(34) & p & vFolderName & "\" & strTemp & ".txt" & Chr(34), vbHide)
+            strTemp = Dir
+            Loop
+        End If
+        
+    Next vFolderName
+    
+    DoEvents
+     For Each vFolderName In colFolders
+        Debug.Print vFolderName
+        DriverID = GetDriverID(CStr(vFolderName))
+        strTemp = Dir(p & vFolderName & "\*.pdf")
+        If Len(strTemp) > 0 Then
+            Do While strTemp <> vbNullString
+                Debug.Print "ReadPDF:" & strTemp
+                ReadPDF p & vFolderName & "\" & strTemp & ".txt", DriverID
+            strTemp = Dir
+            Loop
+        End If
+        
+    Next vFolderName
+    
+End Sub
+
+Sub ReadPDF(PDFFile As String, DriverID As Integer)
+Dim fileName As String
+Dim textData As String
+Dim textRow As String
+Dim fileNo As Integer
+Dim dhinf_b As Boolean
+dhinf_b = False
+Dim rtinf_b As Boolean
+rtinf_b = False
+Dim hcinf_b As Boolean
+hcinf_b = False
+
+Dim dhinf(2) As Byte 'tacograph regs
+Dim rtinf() As String 'road transport regs
+Dim hcinf() As String 'handling of cards
+
+Dim i As Integer
+i = 0
+
+
+Dim z As Integer
+z = 0
+
+Dim x As Byte
+x = 0
+
+
+fileName = PDFFile
+fileNo = FreeFile 'Get first free file number.
+ReRead:
+On Error GoTo ErrHandler
+Open fileName For Input As #fileNo
+z = 0
+Do While Not EOF(fileNo)
+    Line Input #fileNo, textRow
+    
+    'Drivers Hours Infringments
+    If textRow = "total" And dhinf_b = False Then
+        dhinf_b = True
+        Line Input #fileNo, textRow
+        Line Input #fileNo, textRow
+        dhinf(0) = textRow
+        Line Input #fileNo, textRow
+        Line Input #fileNo, textRow
+        dhinf(1) = textRow
+        Line Input #fileNo, textRow
+        Line Input #fileNo, textRow
+        dhinf(2) = textRow
+    End If
+    
+    'road transport regulation
+    If textRow = "total" And rtinf_b = False Then
+        Line Input #fileNo, textRow
+        Line Input #fileNo, textRow
+        
+        rtinf() = Split(textRow, " ")
+        'take out the first element
+        For i = 1 To UBound(rtinf)
+            rtinf(i - 1) = rtinf(i)
+        Next i
+        ReDim Preserve rtinf(UBound(rtinf) - 1)
+        
+        
+        '29102019
+        'CANT REMEMBER WHY WE DOING THIS - MAYBE TO INCLUDE TIME SPAN OF REPORT? -- REPORT LAYOUT MAY HAVE CHNAGED
+        
+        'add two new elements
+        'ReDim Preserve rtinf(UBound(rtinf) + 2)
+        'Line Input #fileNo, textRow
+        'rtinf(UBound(rtinf) - 1) = textRow
+        'Line Input #fileNo, textRow
+        'Dim N() As String
+        'N = Split(textRow, " ")
+        'rtinf(UBound(rtinf)) = N(0)
+        
+        
+        rtinf_b = True
+    End If
+    
+    'handling of digital tachogrpahs
+    If Left(textRow, 5) = "count" And rtinf_b = True And hcinf_b = False And Len(textRow) < 11 = False Then
+        hcinf = Split(textRow, " ")
+        'take out the first element = "count"
+        For i = 1 To UBound(hcinf)
+            hcinf(i - 1) = hcinf(i)
+        Next i
+        ReDim Preserve hcinf(UBound(hcinf) - 1)
+        
+        
+        
+        '29102019
+'        'CANT REMEMBER WHY WE DOING THIS - REPORT LAYOUT MAY HAVE CHNAGED
+'        If Len(textRow) < 11 Then
+'            Line Input #fileNo, textRow
+'            Dim M() As String
+'           M = Split(textRow, " ")
+'            ReDim Preserve hcinf(UBound(hcinf) + 1)
+'            hcinf(UBound(hcinf)) = M(0)
+'        Else
+'            ReDim Preserve hcinf(UBound(hcinf) - 1) ' take out last element as it is the total value
+'        End If
+        
+        ReDim Preserve hcinf(UBound(hcinf) - 1) ' take out last element as it is the total value
+    End If
+        
+    
+    textData = textData & textRow
+Loop
+Close #fileNo
+i = 0
+
+For i = 0 To UBound(dhinf)
+    Debug.Print "Drivers Hours : MI/SI/VSI:" & dhinf(i)
+Next i
+SaveToDb DriverID, "mi", CInt(dhinf(0))
+SaveToDb DriverID, "si", CInt(dhinf(1))
+SaveToDb DriverID, "vsi", CInt(dhinf(2))
+
+i = 0
+
+For i = 0 To UBound(rtinf)
+    Debug.Print "WTD:" & i & " " & CInt(rtinf(i))
+Next i
+
+SaveToDb DriverID, "rtd_41", CInt(rtinf(0))
+SaveToDb DriverID, "rtd_42", CInt(rtinf(1))
+SaveToDb DriverID, "rtd_51a", CInt(rtinf(2))
+SaveToDb DriverID, "rtd_51b", CInt(rtinf(3))
+If UBound(rtinf) > 3 Then
+    SaveToDb DriverID, "rtd_51c", CInt(rtinf(4))
+    SaveToDb DriverID, "rtd_71", CInt(rtinf(5))
+End If
+
+i = 0
+
+For i = 0 To UBound(hcinf)
+    If i = 0 Then
+        Debug.Print "Handling of Cards / Manual Entry Missing:" & hcinf(i) 'first element is Handling of Cards
+    Else
+     Debug.Print "Missing Enrty of Place Where Daily Work Period Begin Or End:" & hcinf(i) 'second element is Missing Entry....
+    End If
+    
+Next i
+
+SaveToDb DriverID, "eu165_34", CInt(hcinf(0))
+SaveToDb DriverID, "eu165_37", CInt(hcinf(1))
+
+ExitSub:
+    Exit Sub
+
+ErrHandler:
+    DoEvents
+    If Err.Number = 52 Or Err.Number = 53 Or Err.Number = 75 Then 'need to wait for disk subsystem to catch up.
+        If z < 100 Then
+            Err.Clear
+            Debug.Print "File Not Ready... Retrying......." & z
+            z = z + 1
+            Resume
+        Else
+            MsgBox Err.Number & ":" & Err.Description & vbCrLf & "Retry Count Exceeded" & vbCrLf & fileName, vbCritical, Now()
+            Resume ExitSub
+        End If
+    Else
+        If Err.Number = 9 Then
+            If x < 20 Then
+                'i dont understand why but...
+                'under msaccess 2013 when using a long path to the executable pdftotext the code fails to match on the keywords read from the file.
+                'this does not happen on access 2000 and it does not happen if a short path is used.
+                'this manifests itself as an out of bounds array call - substring out of range, so I trap that and reread the file -- seems to work!
+                Err.Clear
+                Debug.Print "File Read Failure... Retrying......." & x
+                x = x + 1
+                Resume ReRead
+            Else
+                'MsgBox Err.Number & ":" & Err.Description & vbCrLf & "ReRead Count Exceeded" & vbCrLf & fileName, vbCritical, Now()
+                Resume ExitSub
+            End If
+        Else
+            MsgBox Err.Number & ":" & Err.Description & vbCrLf & vbCrLf & "File:" & fileName, vbCritical, Now()
+            Debug.Print "**********" & fileName
+            Resume ExitSub
+        End If
+    End If
+    Resume
+End Sub
+
+Function SaveToDb(driver_id As Integer, sCol As String, iVal As Integer) As Boolean
+    Dim ssql As String
+    ssql = "insert into tots (driver, " & sCol & ") Values (" & driver_id & "," & iVal & ")"
+    On Error GoTo SaveToDbErr
+    CurrentDb.Execute ssql, dbFailOnError
+    SaveToDb = True
+SaveToDbExit:
+    Exit Function
+SaveToDbErr:
+    SaveToDb = False
+    Resume SaveToDbExit
+End Function
+
+Function GetDriverID(sDriver As String) As Integer
+    GetDriverID = DFirst("contactid", "drivers", "driver_path = " & Chr(34) & sDriver & Chr(34))
+End Function
+
+
+Sub t()
+Dim i As Byte
+Dim z As Byte
+
+Do While z < 255
+    i = 0
+    Do While i < 255
+        Debug.Print "***********"
+        Debug.Print "*" & i & "*"
+        Debug.Print "***********"
+        ReadPDF "S:\PathToFile.pdf.txt"
+        DoEvents
+    i = i + 1
+    Loop
+z = z + 1
+Loop
+
+End Sub
